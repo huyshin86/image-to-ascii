@@ -1,0 +1,11 @@
+/target
+# Ignore images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.svg
+*.ico
+*.tiff
+*.webp
