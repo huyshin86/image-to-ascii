@@ -1,65 +1,95 @@
-use image::{ImageReader, ImageBuffer, Rgb};
-use std::env;
-fn main() -> Result<(), Box<dyn std::error::Error>>{
+use clap::{builder::ValueParser, Parser};
+use image::{ImageBuffer, ImageReader, Rgb};
+
+#[derive(Parser, Debug)]
+struct Cli {
+    /// Path to the input image
+    #[arg(short, long, value_name = "IMAGE_PATH", required = true)]
+    image_path: String,
+
+    /// Path to the output image
+    #[arg(short, long, value_name = "OUTPUT_PATH", default_value = "output.png")]
+    output_path: String,
+
+    /// Disable resizing of the image
+    #[arg(long, value_name = "NO_RESIZE")]
+    no_resize: bool,
+
+    /// Change the font size (default is 8)
+    #[arg(long, value_name = "FONT_SIZE", default_value_t = 8.0, value_parser = ValueParser::new(parse_font_size))]
+    font_size: f32,
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Image to ASCII converter");
-    let args: Vec<String> = env::args().collect();
+    let args = Cli::parse();
 
-    if args.len() < 2 {
-        eprintln!("Usage: {} <image_path>", args[0]);
-        return Err("No image path provided.".into());
-    }
+    // Load font
+    let font = ab_glyph::FontArc::try_from_slice(include_bytes!("fonts/MozillaText-Regular.ttf"))
+    .expect("Failed to load font");
 
-    let image_path = &args[1];
+    let image_path = args.image_path;
     println!("Reading image from path: {}", image_path);
 
     // Load the image
     let img = ImageReader::open(image_path)?
         .decode()?
-        .to_luma8();
+        .into_rgb8();
 
     println!("Load complete, converting image... ");
     
-    let resized = resize_image(&img);
-    let final_image = to_ascii(&resized);
+    if args.font_size > 0.0 {
+        println!("Font size is set to: {}", args.font_size);
+    }
 
-    let output_path = "output.png";
+    // Check if resizing is disabled
+    let final_image: ImageBuffer<Rgb<u8>, Vec<u8>>;
+    if args.no_resize {
+        println!("Resizing is disabled, using original image size.");
+        final_image = to_ascii(&img, args.font_size, &font);
+    } else {
+        println!("Resizing image...");
+        let resized = resize_image(&img);
+        final_image = to_ascii(&resized, args.font_size, &font);
+    }
+
+    let output_path = args.output_path;
     println!("Saving image to path: {}", output_path);
     final_image.save(output_path)?;
 
     Ok(())
 }
 
-fn resize_image(img: &image::GrayImage) -> image::GrayImage{
+fn resize_image(img: &image::RgbImage) -> image::RgbImage{
     let (width, height) = img.dimensions();
-    let new_width = (if width > 1000 {width / 6} else {width / 2}).min(100) as u32;
+    let new_width = (if width > 1000 {width / 6} else {width / 4}).min(100) as u32;
     let new_height = (height as f32 * (new_width as f32 / width as f32 / 2.0)) as u32;
 
     image::imageops::resize(img, new_width, new_height, image::imageops::FilterType::Nearest)
 }
 
-fn to_ascii(img: &image::GrayImage) -> ImageBuffer<Rgb<u8>, Vec<u8>>{
+fn to_ascii(img: &image::RgbImage, font_size: f32, font: &ab_glyph::FontArc) -> ImageBuffer<Rgb<u8>, Vec<u8>>{
     const ASCII_CHARS: [char; 10] = [' ', '.', ':', 'c', 'o', 'P', 'O', '#', '%', '@'];
-    const FONT_SIZE: f32 = 6.0;
+    
     let (width, height) = img.dimensions();
-    let output_width = width * FONT_SIZE as u32;
-    let output_height = height * FONT_SIZE as u32;
+    let output_width = width * font_size as u32;
+    let output_height = height * font_size as u32;
     let mut output_image = ImageBuffer::new(output_width, output_height);
 
-    let font = ab_glyph::FontArc::try_from_slice(include_bytes!("../MozillaText-Regular.ttf"))
-    .expect("Failed to load font");
-
-    let scale = ab_glyph::PxScale::from(FONT_SIZE);
+    let scale = ab_glyph::PxScale::from(font_size);
 
     for y in 0..height {
         for x in 0..width {
-            let brightness = img.get_pixel(x, y)[0] as usize * ASCII_CHARS.len() / 256;
-            let character = ASCII_CHARS[brightness];
+            let pixel = img.get_pixel(x, y);
+            let brightness = compute_brightness(pixel, ASCII_CHARS.len());
+            let character = ASCII_CHARS[brightness.min(ASCII_CHARS.len() - 1)];
+            let rgb = *pixel;
 
             imageproc::drawing::draw_text_mut(
                 &mut output_image,
-                Rgb([255, 255, 255]),
-                (x * FONT_SIZE as u32) as i32,
-                (y * FONT_SIZE as u32) as i32,
+                rgb,
+                (x * font_size as u32) as i32,
+                (y * font_size as u32) as i32,
                 scale,
                 &font,
                 &character.to_string(),
@@ -68,4 +98,17 @@ fn to_ascii(img: &image::GrayImage) -> ImageBuffer<Rgb<u8>, Vec<u8>>{
     }
 
     output_image
+}
+
+fn compute_brightness(pixel: &Rgb<u8>, len: usize) -> usize {
+    let [r, g, b] = pixel.0;
+    ((0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) * len as f32 / 256.0) as usize
+}
+
+fn parse_font_size(s: &str) -> Result<f32, String> {
+    let size: f32 = s.parse().map_err(|_| "not a valid float".to_string())?;
+    if size < 1.0 {
+        return Err("font size must be at least 1.0".to_string());
+    }
+    Ok(size)
 }

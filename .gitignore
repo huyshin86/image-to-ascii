@@ -1,5 +1,6 @@
 /target
 # Ignore images
+/images
 *.png
 *.jpg
 *.jpeg
