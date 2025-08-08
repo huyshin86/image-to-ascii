@@ -8,69 +8,90 @@ struct Cli {
     image_path: String,
 
     /// Path to the output image
-    #[arg(short, long, value_name = "OUTPUT_PATH", default_value = "output.png")]
+    #[arg(short, long, value_name = "OUTPUT_PATH", default_value = "output.png", conflicts_with = "to_terminal")]
     output_path: String,
 
     /// Disable resizing of the image
-    #[arg(long, value_name = "NO_RESIZE")]
+    #[arg(long, value_name = "NO_RESIZE", conflicts_with = "to_terminal")]
     no_resize: bool,
 
+    /// To terminal display
+    #[arg(short, long, value_name = "TO_TERMINAL", default_value_t = false, conflicts_with_all = &["output_path", "no_resize", "font_size"])]
+    to_terminal: bool,
+
     /// Change the font size (default is 8)
-    #[arg(long, value_name = "FONT_SIZE", default_value_t = 8.0, value_parser = ValueParser::new(parse_font_size))]
+    #[arg(long, value_name = "FONT_SIZE", default_value_t = 8.0, value_parser = ValueParser::new(parse_font_size), conflicts_with = "to_terminal")]
     font_size: f32,
 }
+
+const RATIO: [f32; 2] = [1.0, 0.5]; // [for file, for terminal]
+const ASCII_CHARS: [char; 10] = [' ', '.', ':', 'c', 'o', 'P', 'O', '#', '%', '@'];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Image to ASCII converter");
     let args = Cli::parse();
 
-    // Load font
-    let font = ab_glyph::FontArc::try_from_slice(include_bytes!("fonts/MozillaText-Regular.ttf"))
-    .expect("Failed to load font");
-
     let image_path = args.image_path;
     println!("Reading image from path: {}", image_path);
 
     // Load the image
-    let img = ImageReader::open(image_path)?
-        .decode()?
+    let mut img = ImageReader::open(image_path).expect("Failed to open image")
+        .decode()
+        .expect("Failed to decode image")
         .into_rgb8();
 
-    println!("Load complete, converting image... ");
-    
-    if args.font_size > 0.0 {
-        println!("Font size is set to: {}", args.font_size);
-    }
+    println!("--- Load completed ---");
 
-    // Check if resizing is disabled
-    let final_image: ImageBuffer<Rgb<u8>, Vec<u8>>;
-    if args.no_resize {
-        println!("Resizing is disabled, using original image size.");
-        final_image = to_ascii(&img, args.font_size, &font);
-    } else {
+    // Checking resize
+    if !args.no_resize {
         println!("Resizing image...");
-        let resized = resize_image(&img);
-        final_image = to_ascii(&resized, args.font_size, &font);
+        img = resize_image(&img, args.to_terminal);
+    } else {
+        println!("Resizing is disabled, using original image size.");
     }
 
-    let output_path = args.output_path;
-    println!("Saving image to path: {}", output_path);
-    final_image.save(output_path)?;
+    // Checking output source
+    if args.to_terminal {
+        println!("--- Converting to ascii for terminal... ---");
+
+        let ascii_output = to_ascii_terminal(&img);
+        println!("{}", ascii_output);
+    } else {
+        // Load font
+        let font = ab_glyph::FontArc::try_from_slice(include_bytes!("fonts/MozillaText-Regular.ttf"))
+        .expect("Failed to load font");
+
+        println!("--- Converting image to ASCII and saving to file... ---");
+        println!("Using font size: {}", args.font_size);
+
+        let output_image = to_ascii(&img, args.font_size, &font);
+        output_image.save(&args.output_path).expect("Failed to save output image");
+        println!("Output image saved to: {}", args.output_path);
+    }
 
     Ok(())
 }
 
-fn resize_image(img: &image::RgbImage) -> image::RgbImage{
+fn resize_image(img: &image::RgbImage, to_terminal: bool) -> image::RgbImage{
     let (width, height) = img.dimensions();
-    let new_width = (if width > 1000 {width / 6} else {width / 4}).min(100) as u32;
-    let new_height = (height as f32 * (new_width as f32 / width as f32 / 2.0)) as u32;
+    let mut new_width = if width > 1000 {width / 4} else {width / 2};
+    let mut ratio = RATIO[0]; 
 
-    image::imageops::resize(img, new_width, new_height, image::imageops::FilterType::Nearest)
+    if to_terminal {
+        new_width = new_width.min(100);
+        ratio = RATIO[1];
+    }
+    new_width = new_width.max(20);
+
+    let new_height = (height as f32 * (new_width as f32 / width as f32 * ratio)) as u32;
+
+    println!("Resizing image to {}x{} pixels.", new_width, new_height);
+
+    image::imageops::resize(img, new_width, new_height, image::imageops::FilterType::Triangle)
 }
 
+// For outputing an image file
 fn to_ascii(img: &image::RgbImage, font_size: f32, font: &ab_glyph::FontArc) -> ImageBuffer<Rgb<u8>, Vec<u8>>{
-    const ASCII_CHARS: [char; 10] = [' ', '.', ':', 'c', 'o', 'P', 'O', '#', '%', '@'];
-    
     let (width, height) = img.dimensions();
     let output_width = width * font_size as u32;
     let output_height = height * font_size as u32;
@@ -98,6 +119,24 @@ fn to_ascii(img: &image::RgbImage, font_size: f32, font: &ab_glyph::FontArc) -> 
     }
 
     output_image
+}
+
+// For outputing to terminal
+fn to_ascii_terminal(img: &image::RgbImage) -> String{
+    let mut ascii_string = String::new();    
+    let (width, height) = img.dimensions();
+
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = img.get_pixel(x, y);
+            let brightness = compute_brightness(pixel, ASCII_CHARS.len());
+            let character = ASCII_CHARS[brightness.min(ASCII_CHARS.len() - 1)];
+            ascii_string.push(character);
+        }
+        ascii_string.push('\n');
+    }
+
+    ascii_string
 }
 
 fn compute_brightness(pixel: &Rgb<u8>, len: usize) -> usize {
