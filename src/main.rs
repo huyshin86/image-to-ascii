@@ -8,19 +8,19 @@ struct Cli {
     image_path: String,
 
     /// Path to the output image
-    #[arg(short, long, value_name = "OUTPUT_PATH", default_value = "output.png", conflicts_with = "to_terminal")]
+    #[arg(short, long, value_name = "OUTPUT_PATH", default_value = "output.png")]
     output_path: String,
 
     /// Disable resizing of the image
-    #[arg(long, value_name = "NO_RESIZE", conflicts_with = "to_terminal")]
+    #[arg(long)]
     no_resize: bool,
 
     /// To terminal display
-    #[arg(short, long, value_name = "TO_TERMINAL", default_value_t = false, conflicts_with_all = &["output_path", "no_resize", "font_size"])]
+    #[arg(short, long, conflicts_with_all = &["output_path", "no_resize"])]
     to_terminal: bool,
 
     /// Change the font size (default is 8)
-    #[arg(long, value_name = "FONT_SIZE", default_value_t = 8.0, value_parser = ValueParser::new(parse_font_size), conflicts_with = "to_terminal")]
+    #[arg(long, value_name = "FONT_SIZE", default_value_t = 8.0, value_parser = ValueParser::new(parse_font_size))]
     font_size: f32,
 }
 
