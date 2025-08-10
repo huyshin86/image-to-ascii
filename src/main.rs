@@ -1,15 +1,15 @@
-use clap::{builder::ValueParser, Parser};
+use clap::{Parser};
 use image::{ImageBuffer, ImageReader, Rgb};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 struct Cli {
     /// Path to the input image
-    #[arg(short, long, value_name = "IMAGE_PATH", required = true)]
+    #[arg(short, long, value_name = "IMAGE_PATH", value_parser = validate_image_path, required = true)]
     image_path: PathBuf,
 
     /// Path to the output image
-    #[arg(short, long, value_name = "OUTPUT_PATH", default_value = "output.png")]
+    #[arg(short, long, value_name = "OUTPUT_PATH", default_value = "output.png", value_parser = validate_image_path)]
     output_path: PathBuf,
 
     /// Disable resizing of the image
@@ -21,12 +21,17 @@ struct Cli {
     to_terminal: bool,
 
     /// Change the font size (default is 8)
-    #[arg(long, value_name = "FONT_SIZE", default_value_t = 8.0, value_parser = ValueParser::new(parse_font_size))]
+    #[arg(long, value_name = "FONT_SIZE", default_value_t = 8.0, value_parser = parse_font_size)]
     font_size: f32,
+
+    /// Change the font
+    #[arg(short, long, value_name = "FONT")]
+    font: Option<String>,
 }
 
 const RATIO: [f32; 2] = [1.0, 0.5]; // [for file, for terminal]
 const ASCII_CHARS: [char; 10] = [' ', '.', ':', 'c', 'o', 'P', 'O', '#', '%', '@'];
+const SUPPORTED_EXTENSION: &[&str; 4] = &["png", "jpg", "jpeg", "webp"];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Image to ASCII converter");
@@ -36,9 +41,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Reading image from path: {}", image_path.display());
 
     // Load the image
-    let mut img = ImageReader::open(image_path).expect("Failed to open image")
-        .decode()
-        .expect("Failed to decode image")
+    let mut img = ImageReader::open(image_path)?
+        .decode()?
         .into_rgb8();
 
     println!("--- Load completed ---");
@@ -58,21 +62,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ascii_output = to_ascii_terminal(&img);
         println!("{}", ascii_output);
     } else {
-        // Load font
-        let font = ab_glyph::FontArc::try_from_slice(include_bytes!("fonts/MozillaText-Regular.ttf"))
-        .expect("Failed to load font");
-
         println!("--- Converting image to ASCII and saving to file... ---");
+        let font = select_font(args.font.as_deref());
         println!("Using font size: {}", args.font_size);
 
         let output_image = to_ascii(&img, args.font_size, &font);
-        output_image.save(&args.output_path).expect("Failed to save output image");
-        println!("Output image saved to: {}", args.output_path.display());
+        match output_image.save(&args.output_path) {
+            Ok(_) => {println!("Output image saved to: {}", args.output_path.display());},
+            Err(e) => {
+                println!("Failed to save output image: {e}");
+                std::process::exit(1);
+            },
+        };
     }
 
     Ok(())
 }
 
+/*
+    Main logic functions
+*/
 fn resize_image(img: &image::RgbImage, to_terminal: bool) -> image::RgbImage{
     let (width, height) = img.dimensions();
     let mut new_width = if width > 1000 {width / 4} else {width / 2};
@@ -140,6 +149,9 @@ fn to_ascii_terminal(img: &image::RgbImage) -> String{
     ascii_string
 }
 
+/*
+    Support functions
+*/
 fn compute_brightness(pixel: &Rgb<u8>, len: usize) -> usize {
     let [r, g, b] = pixel.0;
     ((0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) * len as f32 / 256.0) as usize
@@ -151,4 +163,41 @@ fn parse_font_size(s: &str) -> Result<f32, String> {
         return Err("font size must be at least 1.0".to_string());
     }
     Ok(size)
+}
+
+fn validate_image_path(s: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(s);
+    if let Some(extension) = path.extension().and_then(|f| f.to_str()) {
+        if !SUPPORTED_EXTENSION.contains(&extension.to_lowercase().as_str()) {
+            return Err("unsupported format".to_string());
+        }
+    } else {
+        return Err("path must have a file extension.".to_string());
+    }
+    Ok(path)
+}
+
+fn select_font(s: Option<&str>) -> ab_glyph::FontArc{
+    if let Some(name) = s {
+        let path = Path::new(name);
+
+        // Read from path
+        if let Ok(data) = std::fs::read(path) {
+            println!("Using custom font");
+            return ab_glyph::FontArc::try_from_vec(data).expect("Failed to load font from file");
+        }
+
+        // Read from filename if file is existed in font directory
+        if path.parent().map_or(true, |p| p.as_os_str().is_empty()) {
+            let fonts_dir_path = PathBuf::from("fonts").join(name);
+            if let Ok(data) = std::fs::read(&fonts_dir_path) {
+                println!("Using bundled font");
+                return ab_glyph::FontArc::try_from_vec(data).expect("Failed to load bundled font");
+            }
+        }
+    }
+
+    // Default font
+    println!("Using default font");
+    ab_glyph::FontArc::try_from_slice(include_bytes!("../fonts/NotoSansJP-Regular.ttf")).expect("Failed to load default font")
 }
