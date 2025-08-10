@@ -1,15 +1,16 @@
 use clap::{builder::ValueParser, Parser};
 use image::{ImageBuffer, ImageReader, Rgb};
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 struct Cli {
     /// Path to the input image
     #[arg(short, long, value_name = "IMAGE_PATH", required = true)]
-    image_path: String,
+    image_path: PathBuf,
 
     /// Path to the output image
     #[arg(short, long, value_name = "OUTPUT_PATH", default_value = "output.png")]
-    output_path: String,
+    output_path: PathBuf,
 
     /// Disable resizing of the image
     #[arg(long)]
@@ -32,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
 
     let image_path = args.image_path;
-    println!("Reading image from path: {}", image_path);
+    println!("Reading image from path: {}", image_path.display());
 
     // Load the image
     let mut img = ImageReader::open(image_path).expect("Failed to open image")
@@ -66,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let output_image = to_ascii(&img, args.font_size, &font);
         output_image.save(&args.output_path).expect("Failed to save output image");
-        println!("Output image saved to: {}", args.output_path);
+        println!("Output image saved to: {}", args.output_path.display());
     }
 
     Ok(())
